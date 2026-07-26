@@ -1,5 +1,4 @@
 
-
 // NewBill.jsx
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {FaArrowLeft} from 'react-icons/fa'
@@ -80,8 +79,48 @@ const NewBill = () => {
   const searchInputRef = useRef(null);
   const dropdownRef = useRef(null);
 
+  // Refs to each row's Qty / Rate inputs, keyed by the item's index in
+  // selectedProducts (originalIndex), so we can move focus programmatically:
+  // search -> qty -> rate -> search
+  // Desktop table and mobile cards are both always in the DOM (toggled via
+  // CSS, not unmounted), so they need separate ref maps to avoid overwriting
+  // each other; a small helper picks whichever one is actually visible.
+  const qtyRefsDesktop = useRef({});
+  const rateRefsDesktop = useRef({});
+  const qtyRefsMobile = useRef({});
+  const rateRefsMobile = useRef({});
+
+  const isVisible = (el) => !!el && el.offsetParent !== null;
+
+  const getQtyEl = (index) => {
+    if (isVisible(qtyRefsDesktop.current[index])) return qtyRefsDesktop.current[index];
+    return qtyRefsMobile.current[index];
+  };
+  const getRateEl = (index) => {
+    if (isVisible(rateRefsDesktop.current[index])) return rateRefsDesktop.current[index];
+    return rateRefsMobile.current[index];
+  };
+
+  // Index (in selectedProducts) of the row that should receive focus
+  // on its Qty input after the next render (set right after adding/
+  // incrementing a product).
+  const [pendingFocusIndex, setPendingFocusIndex] = useState(null);
+
+  // NOTE: selectedProducts always stays in original (ascending / add) order.
+  // This is what Save, Print, and Grand Total use — never reordered.
   const grandTotal = useMemo(() => {
     return selectedProducts.reduce((sum, item) => sum + item.amount, 0);
+  }, [selectedProducts]);
+
+  // Display-only order: most recently added/edited product first.
+  // Used ONLY for rendering the table/cards, so newly added items
+  // appear at the top instead of requiring a scroll to the bottom.
+  // originalIndex is preserved so updateRow/removeRow still target
+  // the correct item in selectedProducts.
+  const displayProducts = useMemo(() => {
+    return selectedProducts
+      .map((item, originalIndex) => ({ item, originalIndex }))
+      .reverse();
   }, [selectedProducts]);
 
   // Persist bill items
@@ -186,12 +225,14 @@ const NewBill = () => {
     const existingIndex = selectedProducts.findIndex(
       (item) => item.product_id === product.product_id
     );
+    let focusIndex;
     if (existingIndex !== -1) {
       const updated = [...selectedProducts];
       updated[existingIndex].quantity += 1;
       updated[existingIndex].quantityDisplay = String(updated[existingIndex].quantity);
       updated[existingIndex].amount = updated[existingIndex].quantity * updated[existingIndex].rate;
       setSelectedProducts(updated);
+      focusIndex = existingIndex;
     } else {
       const newItem = {
         product_id: product.product_id,
@@ -203,12 +244,47 @@ const NewBill = () => {
         amount: product.rate,
       };
       setSelectedProducts([...selectedProducts, newItem]);
+      focusIndex = selectedProducts.length; // index the new item will land at
     }
     setSearchTerm('');
     setDropdownOpen(false);
     setHighlightIndex(-1);
-    searchInputRef.current?.focus();
+    // Move focus to that row's Qty input once it's rendered, instead of
+    // back to the search box, so the user can adjust qty immediately.
+    setPendingFocusIndex(focusIndex);
   }, [selectedProducts]);
+
+  // After selectedProducts re-renders with the new/updated row, focus
+  // and select the text in its Qty input.
+  useEffect(() => {
+    if (pendingFocusIndex === null) return;
+    const el = getQtyEl(pendingFocusIndex);
+    if (el) {
+      el.focus();
+      el.select();
+    }
+    setPendingFocusIndex(null);
+  }, [pendingFocusIndex, selectedProducts]);
+
+  // Qty input: Enter moves to this row's Rate input.
+  const handleQtyKeyDown = (e, originalIndex) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const el = getRateEl(originalIndex);
+      if (el) {
+        el.focus();
+        el.select();
+      }
+    }
+  };
+
+  // Rate input: Enter moves back to the Search input, ready for the next product.
+  const handleRateKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      searchInputRef.current?.focus();
+    }
+  };
 
   // Keyboard navigation
   const handleKeyDown = (e) => {
@@ -240,7 +316,8 @@ const NewBill = () => {
     }
   };
 
-  // Update row
+  // Update row (index refers to the item's position in selectedProducts,
+  // i.e. the originalIndex passed from displayProducts)
   const updateRow = (index, field, displayValue) => {
     const updated = [...selectedProducts];
     const item = updated[index];
@@ -445,26 +522,30 @@ const NewBill = () => {
                         </td>
                       </tr>
                     ) : (
-                      selectedProducts.map((item, index) => (
-                        <tr key={item.product_id + index} className="hover:bg-gray-50 transition">
-                          <td className="px-4 py-3 text-sm text-gray-700">{index + 1}</td>
+                      displayProducts.map(({ item, originalIndex }) => (
+                        <tr key={item.product_id + originalIndex} className="hover:bg-gray-50 transition">
+                          <td className="px-4 py-3 text-sm text-gray-700">{originalIndex + 1}</td>
                           <td className="px-4 py-3 text-sm text-gray-800 font-medium">{item.product_name}</td>
                           <td className="px-4 py-3">
                             <input
+                              ref={(el) => (qtyRefsDesktop.current[originalIndex] = el)}
                               type="text"
                               inputMode="decimal"
                               value={item.quantityDisplay}
-                              onChange={(e) => updateRow(index, 'quantity', e.target.value)}
+                              onChange={(e) => updateRow(originalIndex, 'quantity', e.target.value)}
+                              onKeyDown={(e) => handleQtyKeyDown(e, originalIndex)}
                               className="w-20 px-2 py-1 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                               placeholder="0"
                             />
                           </td>
                           <td className="px-4 py-3">
                             <input
+                              ref={(el) => (rateRefsDesktop.current[originalIndex] = el)}
                               type="text"
                               inputMode="decimal"
                               value={item.rateDisplay}
-                              onChange={(e) => updateRow(index, 'rate', e.target.value)}
+                              onChange={(e) => updateRow(originalIndex, 'rate', e.target.value)}
+                              onKeyDown={handleRateKeyDown}
                               className="w-24 px-2 py-1 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                               placeholder="0"
                             />
@@ -474,7 +555,7 @@ const NewBill = () => {
                           </td>
                           <td className="px-4 py-3">
                             <button
-                              onClick={() => removeRow(index)}
+                              onClick={() => removeRow(originalIndex)}
                               className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded-full transition"
                               aria-label="Remove item"
                             >
@@ -495,15 +576,15 @@ const NewBill = () => {
                 {selectedProducts.length === 0 ? (
                   <div className="px-4 py-8 text-center text-gray-400">No items added yet.</div>
                 ) : (
-                  selectedProducts.map((item, index) => (
-                    <div key={item.product_id + index} className="p-4">
+                  displayProducts.map(({ item, originalIndex }) => (
+                    <div key={item.product_id + originalIndex} className="p-4">
                       <div className="flex justify-between items-start gap-2 mb-3">
                         <div className="min-w-0">
-                          <div className="text-xs text-gray-400">#{index + 1}</div>
+                          <div className="text-xs text-gray-400">#{originalIndex + 1}</div>
                           <div className="text-sm font-medium text-gray-800 break-words">{item.product_name}</div>
                         </div>
                         <button
-                          onClick={() => removeRow(index)}
+                          onClick={() => removeRow(originalIndex)}
                           className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1.5 rounded-full transition shrink-0"
                           aria-label="Remove item"
                         >
@@ -516,10 +597,12 @@ const NewBill = () => {
                         <div>
                           <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Qty</label>
                           <input
+                            ref={(el) => (qtyRefsMobile.current[originalIndex] = el)}
                             type="text"
                             inputMode="decimal"
                             value={item.quantityDisplay}
-                            onChange={(e) => updateRow(index, 'quantity', e.target.value)}
+                            onChange={(e) => updateRow(originalIndex, 'quantity', e.target.value)}
+                            onKeyDown={(e) => handleQtyKeyDown(e, originalIndex)}
                             className="w-full px-2 py-2 text-base border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             placeholder="0"
                           />
@@ -527,10 +610,12 @@ const NewBill = () => {
                         <div>
                           <label className="block text-[11px] uppercase tracking-wide text-gray-400 mb-1">Rate</label>
                           <input
+                            ref={(el) => (rateRefsMobile.current[originalIndex] = el)}
                             type="text"
                             inputMode="decimal"
                             value={item.rateDisplay}
-                            onChange={(e) => updateRow(index, 'rate', e.target.value)}
+                            onChange={(e) => updateRow(originalIndex, 'rate', e.target.value)}
+                            onKeyDown={handleRateKeyDown}
                             className="w-full px-2 py-2 text-base border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             placeholder="0"
                           />
