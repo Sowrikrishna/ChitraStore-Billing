@@ -1,5 +1,3 @@
-
-
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import html2canvas from 'html2canvas';
@@ -203,6 +201,7 @@ const PrintView = () => {
         windowHeight: fullHeight,
         scrollX: 0,
         scrollY: 0,
+        letterRendering: true, // fixes bold text (esp. tabular numbers) rasterizing thin/regular
       });
 
       if (!canvas || canvas.width === 0 || canvas.height === 0) {
@@ -251,7 +250,7 @@ const PrintView = () => {
         }
       }
 
-      pdf.save(`Chitra_Store_Quotation_${quotationNo}.pdf`);
+      pdf.save(`CS_QuotationNo:${quotationNo}.pdf`);
     } catch (error) {
       console.error('PDF generation error:', error);
       alert(`Failed to generate PDF: ${error.message || 'Unknown error'}. Please try printing instead.`);
@@ -326,19 +325,21 @@ const PrintView = () => {
                   font-family: 'Courier New', monospace;
                   font-size: 12pt;
                   line-height: 1.5;
-                  font-weight: bold;
+                  font-weight: 700;
                   box-sizing: border-box;
                   overflow: visible !important;
                 }
                 .print-wrapper,
                 .print-wrapper * {
-                  font-weight: bold !important;
+                  font-weight: 700 !important;
+                  font-synthesis: weight;
+                  -webkit-font-smoothing: antialiased;
                   box-sizing: border-box;
                 }
                 .tamil-symbol {
                   text-align: center;
                   font-size: 12pt;
-                  font-weight: bold;
+                  font-weight: 700;
                   margin-bottom: 4mm;
                 }
                 .bill-header {
@@ -348,10 +349,10 @@ const PrintView = () => {
                   padding-bottom: 5mm;
                   margin-bottom: 6mm;
                 }
-                .store-info { font-weight: bold; }
+                .store-info { font-weight: 700; }
                 .store-name {
                   font-size: 20pt;
-                  font-weight: bold;
+                  font-weight: 700;
                   margin-bottom: 2mm;
                 }
                 .quotation-info {
@@ -360,11 +361,11 @@ const PrintView = () => {
                 }
                 .quotation-title {
                   font-size: 16pt;
-                  font-weight: bold;
+                  font-weight: 700;
                   margin-bottom: 2mm;
                 }
                 .quotation-info .quotation-no {
-                  font-weight: bold;
+                  font-weight: 700;
                 }
                 .bill-table {
                   width: 100%;
@@ -382,14 +383,14 @@ const PrintView = () => {
                   border-bottom: 2px solid #333;
                   text-align: left;
                   padding: 3mm 2mm;
-                  font-weight: bold;
+                  font-weight: 700 !important;
                   white-space: nowrap;
-                  
                 }
                 .bill-table td {
                   padding: 2.5mm 2mm;
                   border-bottom: 1px dotted #ccc;
                   vertical-align: top;
+                  font-weight: 700 !important;
                 }
                 .bill-table td.product-cell {
                   word-break: break-word;
@@ -401,10 +402,12 @@ const PrintView = () => {
                 .bill-table td.right,
                 .bill-table th.right {
                   font-variant-numeric: tabular-nums;
+                  font-weight: 700 !important;
                   white-space: nowrap;
                 }
                 .bill-table td.amount-cell {
-                  font-weight: bold;
+                  font-weight: 700 !important;
+                  font-variant-numeric: tabular-nums;
                   white-space: nowrap;
                 }
                 .grand-total {
@@ -417,11 +420,12 @@ const PrintView = () => {
                 }
                 .grand-total .total-items {
                   font-size: 12pt;
-                  font-weight: bold;
+                  font-weight: 700 !important;
                 }
                 .grand-total .total-amount {
-                  font-weight: bold;
+                  font-weight: 700 !important;
                   font-size: 15pt;
+                  font-variant-numeric: tabular-nums;
                   white-space: nowrap;
                 }
                 .footer {
@@ -438,9 +442,8 @@ const PrintView = () => {
                   justify-content: center;
                   gap: 2mm;
                   font-size: 13pt;
-                  font-weight: bold;
+                  font-weight: 700;
                   color: #075E54;
-                  
                 }
                 .preview-viewport {
                   width: 100%;
