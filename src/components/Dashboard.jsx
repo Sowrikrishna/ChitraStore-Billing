@@ -20,7 +20,7 @@ import { useNavigate } from 'react-router-dom';
 // ------------------------------------------------------------
 // JSONP helper (copied from NewBill)
 // ------------------------------------------------------------
-function jsonpRequest(url, timeout = 15000) {
+function jsonpRequest(url, timeout = 30000) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
     const callback = 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);

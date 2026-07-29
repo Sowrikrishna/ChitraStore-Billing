@@ -6,7 +6,7 @@ import { FaArrowLeft } from 'react-icons/fa';
 const APPS_SCRIPT_URL = import.meta.env.VITE_BILL_URL;
 
 // JSONP helper
-function jsonpRequest(url, timeout = 15000) {
+function jsonpRequest(url, timeout = 30000) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
     const callback = 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);

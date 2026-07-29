@@ -11,7 +11,7 @@ const STORAGE_KEY = 'newbill_selected_products';
 const QUOTATION_STORAGE_KEY = 'last_quotation_no';
 
 // JSONP helper
-function jsonpRequest(url, timeout = 15000) {
+function jsonpRequest(url, timeout = 30000) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
     const callback = 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
