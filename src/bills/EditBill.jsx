@@ -1,25 +1,16 @@
-
-
+// EditBill.jsx
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FaArrowLeft } from 'react-icons/fa';
-import { useNavigate } from 'react-router-dom';
-import SaveBill from '../bills/SaveBill';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 const BASE_URL = import.meta.env.VITE_PRODUCT_URL;
 const APPS_SCRIPT_URL = import.meta.env.VITE_BILL_URL;
 
 const MAX_RESULTS = 50;
-const STORAGE_KEY = 'newbill_selected_products';
-const QUOTATION_STORAGE_KEY = 'last_quotation_no';
-
-// Cache keys and TTL (5 minutes)
-const PRODUCTS_CACHE_KEY = 'newbill_products_cache';
-const QUOTATION_CACHE_KEY = 'newbill_quotation_cache';
+const PRODUCTS_CACHE_KEY = 'editbill_products_cache';
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-// ------------------------------------------------------------
-// JSONP helper (same as before)
-// ------------------------------------------------------------
+// JSONP helper
 function jsonpRequest(url, timeout = 15000) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
@@ -49,9 +40,7 @@ function jsonpRequest(url, timeout = 15000) {
   });
 }
 
-// ------------------------------------------------------------
-// Cache helpers (localStorage with TTL)
-// ------------------------------------------------------------
+// Cache helpers
 function getCached(key) {
   try {
     const raw = localStorage.getItem(key);
@@ -75,9 +64,7 @@ function setCached(key, data) {
   }
 }
 
-// ------------------------------------------------------------
-// Scoring function (unchanged)
-// ------------------------------------------------------------
+// Scoring function
 function scoreProduct(product, q) {
   const id = product._id;
   const name = product._name;
@@ -93,27 +80,37 @@ function scoreProduct(product, q) {
 // ------------------------------------------------------------
 // Main Component
 // ------------------------------------------------------------
-const NewBill = () => {
+const EditBill = () => {
+  const location = useLocation();
   const navigate = useNavigate();
+  const { products: initialProducts, quotationNo, customerName: initialCustomer, timestamp } = location.state || {};
 
+  useEffect(() => {
+    if (!quotationNo) {
+      navigate('/view-bills');
+    }
+  }, [quotationNo, navigate]);
+
+  // ------------------------------------------------------------
   // State
+  // ------------------------------------------------------------
+  const [customerName, setCustomerName] = useState(initialCustomer || '');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProducts, setSelectedProducts] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
+    const initial = initialProducts || [];
+    return initial.map(item => ({
+      ...item,
+      quantityDisplay: item.quantityDisplay !== undefined ? item.quantityDisplay : String(item.quantity || 0),
+      rateDisplay: item.rateDisplay !== undefined ? item.rateDisplay : String(item.rate || 0),
+      amount: (item.quantity || 0) * (item.rate || 0)
+    }));
   });
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const [loading, setLoading] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [allProducts, setAllProducts] = useState([]);
   const [error, setError] = useState(null);
-  const [showSaveModal, setShowSaveModal] = useState(false);
-  const [quotationNo, setQuotationNo] = useState(null);
-  const [fetchingQuotation, setFetchingQuotation] = useState(true);
+  const [updating, setUpdating] = useState(false);
 
   // Refs
   const searchInputRef = useRef(null);
@@ -124,8 +121,8 @@ const NewBill = () => {
   const qtyRefsMobile = useRef({});
   const rateRefsMobile = useRef({});
   const [pendingFocusIndex, setPendingFocusIndex] = useState(null);
+  const iframeRef = useRef(null);
 
-  // Helper to check visibility
   const isVisible = (el) => !!el && el.offsetParent !== null;
   const getQtyEl = (index) => {
     if (isVisible(qtyRefsDesktop.current[index])) return qtyRefsDesktop.current[index];
@@ -136,14 +133,11 @@ const NewBill = () => {
     return rateRefsMobile.current[index];
   };
 
-  // ------------------------------------------------------------
-  // Fetch products with caching
-  // ------------------------------------------------------------
+  // Fetch products (cached)
   const fetchProducts = useCallback(async (forceRefresh = false) => {
     if (fetchingRef.current) return;
     fetchingRef.current = true;
 
-    // Use cache if available and not force refreshing
     if (!forceRefresh) {
       const cached = getCached(PRODUCTS_CACHE_KEY);
       if (cached) {
@@ -151,7 +145,6 @@ const NewBill = () => {
         setError(null);
         setLoading(false);
         fetchingRef.current = false;
-        // Still refresh in background after a small delay
         setTimeout(() => fetchProducts(true), 100);
         return;
       }
@@ -174,7 +167,6 @@ const NewBill = () => {
         throw new Error(data.message || 'Failed to load products.');
       }
     } catch (err) {
-      // If we have cached data, keep it and show a warning
       const cached = getCached(PRODUCTS_CACHE_KEY);
       if (cached) {
         setAllProducts(cached);
@@ -188,82 +180,18 @@ const NewBill = () => {
     }
   }, []);
 
-  // ------------------------------------------------------------
-  // Fetch quotation number with caching
-  // ------------------------------------------------------------
-  const fetchQuotation = useCallback(async () => {
-    setFetchingQuotation(true);
-    // Try cache first
-    const cached = getCached(QUOTATION_CACHE_KEY);
-    if (cached) {
-      setQuotationNo(cached);
-      setFetchingQuotation(false);
-      // Still fetch in background to update
-      setTimeout(() => {
-        fetchQuotationFresh();
-      }, 100);
-      return;
-    }
-    await fetchQuotationFresh();
-  }, []);
-
-  const fetchQuotationFresh = async () => {
-    try {
-      const data = await jsonpRequest(APPS_SCRIPT_URL);
-      if (data && data.lastQuotation) {
-        setQuotationNo(data.lastQuotation);
-        setCached(QUOTATION_CACHE_KEY, data.lastQuotation);
-        localStorage.setItem(QUOTATION_STORAGE_KEY, data.lastQuotation);
-      } else {
-        // fallback
-        const defaultNo = 'Q-0';
-        setQuotationNo(defaultNo);
-        setCached(QUOTATION_CACHE_KEY, defaultNo);
-        localStorage.setItem(QUOTATION_STORAGE_KEY, defaultNo);
-      }
-    } catch (err) {
-      // Use localStorage fallback
-      const stored = localStorage.getItem(QUOTATION_STORAGE_KEY);
-      if (stored) {
-        setQuotationNo(stored);
-        setCached(QUOTATION_CACHE_KEY, stored);
-      } else {
-        const defaultNo = 'Q-0';
-        setQuotationNo(defaultNo);
-        setCached(QUOTATION_CACHE_KEY, defaultNo);
-        localStorage.setItem(QUOTATION_STORAGE_KEY, defaultNo);
-      }
-    } finally {
-      setFetchingQuotation(false);
-    }
-  };
-
-  // ------------------------------------------------------------
-  // Effects
-  // ------------------------------------------------------------
   useEffect(() => {
     fetchProducts(false);
-    fetchQuotation();
-
-    // Refresh cache periodically
-    const interval = setInterval(() => {
-      fetchProducts(true);
-      fetchQuotationFresh(); // refresh quotation too
-    }, CACHE_TTL);
+    const interval = setInterval(() => fetchProducts(true), CACHE_TTL);
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchProducts]);
 
-  // Persist selected products
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(selectedProducts));
-    } catch (error) {
-      console.error('Error saving bill:', error);
-    }
+      localStorage.setItem('editbill_selected_products', JSON.stringify(selectedProducts));
+    } catch (e) { /* ignore */ }
   }, [selectedProducts]);
 
-  // Focus handling after adding product
   useEffect(() => {
     if (pendingFocusIndex === null) return;
     const el = getQtyEl(pendingFocusIndex);
@@ -274,9 +202,7 @@ const NewBill = () => {
     setPendingFocusIndex(null);
   }, [pendingFocusIndex, selectedProducts]);
 
-  // ------------------------------------------------------------
-  // Computed values
-  // ------------------------------------------------------------
+  // Computed
   const grandTotal = useMemo(() => {
     return selectedProducts.reduce((sum, item) => sum + item.amount, 0);
   }, [selectedProducts]);
@@ -305,7 +231,6 @@ const NewBill = () => {
     return scored.slice(0, MAX_RESULTS).map((s) => s.product);
   }, [searchTerm, allProducts]);
 
-  // Dropdown open/close
   useEffect(() => {
     if (!searchTerm.trim()) {
       setDropdownOpen(false);
@@ -425,47 +350,94 @@ const NewBill = () => {
     setSelectedProducts(selectedProducts.filter((_, i) => i !== index));
   };
 
-  const handleSaveClick = () => {
+  // ------------------------------------------------------------
+  // UPDATE BILL – single payload field (no more + signs)
+  //
+  // FIX: previously the hidden form had no `enctype`, so the browser
+  // defaulted to `application/x-www-form-urlencoded`. In that encoding
+  // every space becomes a literal "+" character. If the Apps Script
+  // backend decodes the raw POST body itself (e.g. via
+  // decodeURIComponent) instead of via e.parameter, the "+" is never
+  // converted back into a space (only proper form-decoders do that),
+  // so product names like "சக்தி மஞ்சள் தூள் 100கி" come back as
+  // "சக்தி+மஞ்சள்+தூள்+100கி".
+  //
+  // Submitting as `multipart/form-data` instead avoids this whole
+  // class of bug: multipart sends the raw UTF-8 bytes as-is, with no
+  // "+"-for-space substitution, so no backend decoding step can get
+  // it wrong.
+  // ------------------------------------------------------------
+  const handleUpdateBill = () => {
     if (selectedProducts.length === 0) {
-      alert('No items to save.');
+      alert('Cannot save an empty bill.');
       return;
     }
-    setShowSaveModal(true);
-  };
-
-  const handleSaveSuccess = () => {
-    setShowSaveModal(false);
-    // Generate next quotation number locally
-    if (quotationNo) {
-      const match = quotationNo.match(/Q-(\d+)/);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        const nextNum = num + 1;
-        const nextQuotation = `Q-${nextNum}`;
-        setQuotationNo(nextQuotation);
-        setCached(QUOTATION_CACHE_KEY, nextQuotation);
-        localStorage.setItem(QUOTATION_STORAGE_KEY, nextQuotation);
-      } else {
-        const fallback = 'Q-1';
-        setQuotationNo(fallback);
-        setCached(QUOTATION_CACHE_KEY, fallback);
-        localStorage.setItem(QUOTATION_STORAGE_KEY, fallback);
-      }
-    } else {
-      const fallback = 'Q-1';
-      setQuotationNo(fallback);
-      setCached(QUOTATION_CACHE_KEY, fallback);
-      localStorage.setItem(QUOTATION_STORAGE_KEY, fallback);
+    if (!customerName.trim()) {
+      alert('Please enter a customer name.');
+      return;
     }
+
+    setUpdating(true);
+
+    // Build payload object (all data)
+    const payload = {
+      action: 'updateBill',
+      quotationNo: quotationNo,
+      customerName: customerName.trim(),
+      products: selectedProducts,
+      totalAmount: grandTotal,
+      timestamp: Date.now(),
+    };
+
+    // Create or reuse a hidden iframe
+    if (!iframeRef.current) {
+      const iframe = document.createElement('iframe');
+      iframe.name = 'updateBillIframe';
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+      iframeRef.current = iframe;
+    }
+
+    const handleLoad = () => {
+      iframeRef.current.removeEventListener('load', handleLoad);
+      setUpdating(false);
+      alert('Bill updated successfully!');
+      navigate('/view-bills');
+    };
+    iframeRef.current.addEventListener('load', handleLoad);
+
+    // Create form with a single 'payload' field
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = APPS_SCRIPT_URL;
+    form.target = 'updateBillIframe';
+    form.enctype = 'multipart/form-data'; // <-- FIX: avoids "+"-for-space encoding
+    form.style.display = 'none';
+
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'payload';
+    input.value = JSON.stringify(payload);
+    form.appendChild(input);
+
+    document.body.appendChild(form);
+    form.submit();
+
+    setTimeout(() => {
+      if (form.parentNode) form.parentNode.removeChild(form);
+    }, 100);
   };
 
+  // Print handler
   const handlePrint = () => {
     if (quotationNo) {
       navigate('/print', {
         state: {
           products: selectedProducts,
           quotationNo: quotationNo,
-        },
+          timestamp: Date.now(),
+          autoPrint: true,
+        }
       });
     }
   };
@@ -477,13 +449,27 @@ const NewBill = () => {
     <div className="min-h-screen bg-gray-50 p-3 sm:p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         <button
-          onClick={() => navigate('/dashboard')}
+          onClick={() => navigate('/view-bills')}
           className="p-2 rounded-full bg-white shadow-sm border border-gray-200 hover:bg-gray-50 transition-colors"
-          aria-label="Back to Dashboard"
+          aria-label="Back to Bills"
         >
           <FaArrowLeft className="text-gray-600 w-4 h-4" />
         </button>
-        <h1 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6">New Bill</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4">Edit Bill</h1>
+
+        {/* Customer Name Input */}
+        <div className="bg-white rounded-xl shadow-lg p-4 mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Customer Name
+          </label>
+          <input
+            type="text"
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
+            placeholder="Enter customer name"
+          />
+        </div>
 
         <div className="flex flex-col lg:flex-row gap-4 sm:gap-6">
           {/* LEFT PANEL - Search */}
@@ -719,26 +705,14 @@ const NewBill = () => {
                     <div className="text-base sm:text-lg font-semibold text-gray-800">
                       Grand Total: ₹{grandTotal.toFixed(2)}
                     </div>
-                    {quotationNo && (
-                      <div className="text-sm text-blue-600 font-medium">
-                        Quotation: {quotationNo}
-                      </div>
-                    )}
-                    {fetchingQuotation && (
-                      <div className="text-sm text-gray-500">
-                        <span className="animate-pulse">Loading quotation...</span>
-                      </div>
-                    )}
+                    <div className="text-sm text-blue-600 font-medium">
+                      Quotation: {quotationNo}
+                    </div>
                   </div>
 
                   <button
                     onClick={handlePrint}
-                    disabled={!quotationNo}
-                    className={`px-4 py-2 rounded-lg transition flex items-center gap-2 ${
-                      quotationNo
-                        ? 'bg-blue-600 text-white hover:bg-blue-700'
-                        : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                    }`}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center gap-2"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
@@ -747,13 +721,15 @@ const NewBill = () => {
                   </button>
 
                   <button
-                    onClick={handleSaveClick}
-                    className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition flex items-center gap-2"
+                    onClick={handleUpdateBill}
+                    disabled={updating}
+                    className={`px-4 py-2 rounded-lg transition flex items-center gap-2 ${
+                      updating
+                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                        : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    }`}
                   >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" />
-                    </svg>
-                    Save
+                    {updating ? 'Updating...' : 'Update Bill'}
                   </button>
                 </div>
               )}
@@ -761,16 +737,8 @@ const NewBill = () => {
           </div>
         </div>
       </div>
-
-      <SaveBill
-        isOpen={showSaveModal}
-        onClose={() => setShowSaveModal(false)}
-        products={selectedProducts}
-        totalAmount={grandTotal}
-        onSaveSuccess={handleSaveSuccess}
-      />
     </div>
   );
 };
 
-export default NewBill;
+export default EditBill;

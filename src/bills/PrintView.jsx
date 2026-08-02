@@ -14,15 +14,12 @@ const PrintView = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const products = location.state?.products || [];
-  // Use quotationNo from state, fallback only if missing (should not happen)
   const quotationNo = location.state?.quotationNo || 'Q-0000';
   const printRef = useRef();
   const previewViewportRef = useRef();
   const [isPrinting, setIsPrinting] = useState(false);
 
-  // ------------------------------------------------------------
-  // Mobile-responsive preview: scale the A4 document to fit viewport
-  // ------------------------------------------------------------
+  // Mobile-responsive preview scaling
   const [scale, setScale] = useState(1);
   const [contentHeight, setContentHeight] = useState(0);
 
@@ -51,10 +48,9 @@ const PrintView = () => {
     return () => ro.disconnect();
   }, [products]);
 
-  // Date and time for display – use current time (or optionally pass from parent)
   const billTimestamp = location.state?.timestamp;
   const billDate = billTimestamp ? new Date(billTimestamp) : new Date();
-  const dateStr = billDate.toLocaleDateString('en-IN', { day: '2-digit', month:       'short', year: 'numeric' });
+  const dateStr = billDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   const timeStr = billDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 
   const grandTotal = products.reduce((sum, item) => sum + item.amount, 0);
@@ -146,7 +142,7 @@ const PrintView = () => {
   };
 
   // ============================================================
-  //  PDF DOWNLOAD (unchanged logic)
+  //  PDF DOWNLOAD
   // ============================================================
   const handleDownloadPDF = async () => {
     if (isPrinting) return;
@@ -201,7 +197,7 @@ const PrintView = () => {
         windowHeight: fullHeight,
         scrollX: 0,
         scrollY: 0,
-        letterRendering: true, // fixes bold text (esp. tabular numbers) rasterizing thin/regular
+        letterRendering: true,
       });
 
       if (!canvas || canvas.width === 0 || canvas.height === 0) {
@@ -250,7 +246,7 @@ const PrintView = () => {
         }
       }
 
-      pdf.save(`CS_QuotationNo:${quotationNo}.pdf`);
+      pdf.save(`CHITRA-STORE QNo:${quotationNo}.pdf`);
     } catch (error) {
       console.error('PDF generation error:', error);
       alert(`Failed to generate PDF: ${error.message || 'Unknown error'}. Please try printing instead.`);
@@ -325,7 +321,7 @@ const PrintView = () => {
                   font-family: 'Courier New', monospace;
                   font-size: 12pt;
                   line-height: 1.5;
-                  font-weight: 700;
+                  font-weight: 700 !important;  /* ensure all text is bold by default */
                   box-sizing: border-box;
                   overflow: visible !important;
                 }
@@ -390,7 +386,8 @@ const PrintView = () => {
                   padding: 2.5mm 2mm;
                   border-bottom: 1px dotted #ccc;
                   vertical-align: top;
-                  font-weight: 700 !important;
+                  font-weight: 700 !important;  /* explicitly bold for all cells */
+                  font-size: 12pt;
                 }
                 .bill-table td.product-cell {
                   word-break: break-word;
@@ -419,12 +416,12 @@ const PrintView = () => {
                   padding-top: 3mm;
                 }
                 .grand-total .total-items {
-                  font-size: 12pt;
+                  font-size: 16pt;
                   font-weight: 700 !important;
                 }
                 .grand-total .total-amount {
                   font-weight: 700 !important;
-                  font-size: 15pt;
+                  font-size: 18pt;          /* increased for prominence */
                   font-variant-numeric: tabular-nums;
                   white-space: nowrap;
                 }
@@ -521,7 +518,7 @@ const PrintView = () => {
               <div className="footer">
                 <div>Thank you for your business!</div>
                 <div className="whatsapp-line">
-                  <svg width="14" height="14" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                  <svg width="18" height="18" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                     <circle cx="16" cy="18" r="18" fill="#25D366" />
                     <path
                       fill="#FFFFFF"

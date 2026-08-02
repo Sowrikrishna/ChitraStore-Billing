@@ -1,47 +1,97 @@
-
-// AddProduct.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FaArrowLeft } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
+
 // ============================================================
-// CONFIGURATION – UPDATE THIS WITH YOUR DEPLOYED WEB APP URL
+// CONFIGURATION
 // ============================================================
 const BASE_URL = import.meta.env.VITE_PRODUCT_URL;
 
 // ============================================================
-// JSONP helper
+// ROBUST JSONP HELPER (never rejects, retries, returns { success, ... })
 // ============================================================
-function jsonpRequest(url, callbackName) {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    const callback = callbackName || 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-    window[callback] = function(data) {
-      delete window[callback];
-      document.body.removeChild(script);
-      resolve(data);
+function jsonpRequest(url, timeout = 20000, retries = 2) {
+  return new Promise((resolve) => {
+    const attempt = (remaining) => {
+      const script = document.createElement('script');
+      const callback = 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+      const timer = setTimeout(() => {
+        cleanup();
+        if (remaining > 0) {
+          setTimeout(() => attempt(remaining - 1), 2000);
+        } else {
+          resolve({ success: false, message: 'Request timed out' });
+        }
+      }, timeout);
+
+      window[callback] = function (data) {
+        cleanup();
+        resolve(data);
+      };
+
+      function cleanup() {
+        clearTimeout(timer);
+        delete window[callback];
+        if (script.parentNode) script.parentNode.removeChild(script);
+      }
+
+      script.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + callback;
+      script.onerror = function () {
+        cleanup();
+        if (remaining > 0) {
+          setTimeout(() => attempt(remaining - 1), 2000);
+        } else {
+          resolve({ success: false, message: 'Network error' });
+        }
+      };
+      document.body.appendChild(script);
     };
-    script.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + callback;
-    script.onerror = function() {
-      delete window[callback];
-      document.body.removeChild(script);
-      reject(new Error('JSONP request failed'));
-    };
-    document.body.appendChild(script);
+    attempt(retries);
   });
+}
+
+// ============================================================
+// CACHE HELPERS (for product list – used for fast ID checks)
+// ============================================================
+const PRODUCTS_CACHE_KEY = 'addProduct_products_cache';
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+function getCachedProducts() {
+  try {
+    const raw = localStorage.getItem(PRODUCTS_CACHE_KEY);
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    if (Date.now() - cached.timestamp > CACHE_TTL) {
+      localStorage.removeItem(PRODUCTS_CACHE_KEY);
+      return null;
+    }
+    return cached.data;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedProducts(data) {
+  try {
+    localStorage.setItem(PRODUCTS_CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
+  } catch {
+    /* ignore */
+  }
 }
 
 // ============================================================
 // MAIN COMPONENT
 // ============================================================
 const AddProduct = () => {
+  const navigate = useNavigate();
+
   // ---------- Form fields ----------
   const [productId, setProductId] = useState('');
   const [productName, setProductName] = useState('');
   const [productNameEn, setProductNameEn] = useState('');
   const [quantity, setQuantity] = useState('');
   const [rate, setRate] = useState('');
-  const [sNo, setSNo] = useState(null);  
-  const navigate = useNavigate();    // auto‑computed
+  const [sNo, setSNo] = useState(null);
 
   // ---------- UI states ----------
   const [loading, setLoading] = useState(false);
@@ -49,63 +99,120 @@ const AddProduct = () => {
   const [idExists, setIdExists] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [isAdding, setIsAdding] = useState(false);
+  const [productsLoaded, setProductsLoaded] = useState(false);
+  const [allProducts, setAllProducts] = useState([]);
+
+  const fetchingRef = useRef(false);
+
+  // ---------- Fetch products list (for local ID checks) ----------
+  const fetchProducts = async (forceRefresh = false) => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
+
+    if (!forceRefresh) {
+      const cached = getCachedProducts();
+      if (cached) {
+        setAllProducts(cached);
+        setProductsLoaded(true);
+        fetchingRef.current = false;
+        // Background refresh
+        setTimeout(() => fetchProducts(true), 100);
+        return;
+      }
+    }
+
+    const res = await jsonpRequest(`${BASE_URL}?action=getProducts`);
+    if (res.success) {
+      setAllProducts(res.data);
+      setCachedProducts(res.data);
+      setProductsLoaded(true);
+    } else {
+      // If cache exists, keep using it
+      const cached = getCachedProducts();
+      if (cached) {
+        setAllProducts(cached);
+        setProductsLoaded(true);
+      } else {
+        setMessage({ type: 'error', text: 'Failed to load product list. ID checks may be slow.' });
+      }
+    }
+    fetchingRef.current = false;
+  };
 
   // ---------- Fetch next S.No on mount ----------
   useEffect(() => {
     const fetchNextSNo = async () => {
-      try {
-        const data = await jsonpRequest(`${BASE_URL}?action=getNextSNo`);
-        if (data.success) {
-          setSNo(data.nextSNo);
-        } else {
-          setMessage({ type: 'error', text: 'Failed to fetch next S.No: ' + data.message });
-        }
-      } catch (error) {
-        setMessage({ type: 'error', text: 'Error fetching next S.No: ' + error.message });
+      const res = await jsonpRequest(`${BASE_URL}?action=getNextSNo`);
+      if (res.success) {
+        setSNo(res.nextSNo);
+      } else {
+        setMessage({ type: 'error', text: 'Failed to fetch next S.No: ' + res.message });
       }
     };
     fetchNextSNo();
+
+    // Also load product list for fast ID checks
+    fetchProducts(false);
   }, []);
 
-  // ---------- Check Product ID uniqueness ----------
-  const handleCheckId = async () => {
-    if (!productId.trim()) {
+  // ---------- Check Product ID uniqueness (local + remote fallback) ----------
+  const handleCheckId = () => {
+    const id = productId.trim();
+    if (!id) {
       setMessage({ type: 'warning', text: 'Please enter a Product ID to check.' });
       return;
     }
+
     setCheckLoading(true);
     setMessage({ type: '', text: '' });
-    try {
-      const data = await jsonpRequest(`${BASE_URL}?action=checkProductId&id=${encodeURIComponent(productId.trim())}`);
-      if (data.success) {
-        setIdExists(data.exists);
-        if (data.exists) {
-          setMessage({ type: 'error', text: `Product ID "${productId}" already exists. Choose a different one.` });
+
+    // 1. Try local lookup if products are loaded
+    if (productsLoaded) {
+      const found = allProducts.some(p => p.product_id === id);
+      setIdExists(found);
+      if (found) {
+        setMessage({ type: 'error', text: `Product ID "${id}" already exists.` });
+      } else {
+        setMessage({ type: 'success', text: `Product ID "${id}" is available.` });
+      }
+      setCheckLoading(false);
+      return;
+    }
+
+    // 2. Fallback to remote check
+    (async () => {
+      const res = await jsonpRequest(`${BASE_URL}?action=checkProductId&id=${encodeURIComponent(id)}`);
+      if (res.success) {
+        setIdExists(res.exists);
+        if (res.exists) {
+          setMessage({ type: 'error', text: `Product ID "${id}" already exists.` });
         } else {
-          setMessage({ type: 'success', text: `Product ID "${productId}" is available.` });
+          setMessage({ type: 'success', text: `Product ID "${id}" is available.` });
         }
       } else {
-        setMessage({ type: 'error', text: 'Error checking ID: ' + data.message });
+        setMessage({ type: 'error', text: 'Error checking ID: ' + res.message });
       }
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Network error while checking ID.' });
-    } finally {
       setCheckLoading(false);
-    }
+    })();
   };
 
   // ---------- Add new product ----------
   const handleAddProduct = async (e) => {
     e.preventDefault();
 
-    // Validation
     if (!productId.trim() || !productName.trim() || !quantity || !rate) {
-      setMessage({ type: 'warning', text: 'Please fill in all required fields (ID, Name, Quantity, Rate).' });
+      setMessage({ type: 'warning', text: 'Please fill in all required fields.' });
       return;
     }
 
-    // Ensure ID is unique (double‑check)
-    if (idExists) {
+    // Double‑check uniqueness (if products loaded)
+    if (productsLoaded) {
+      const found = allProducts.some(p => p.product_id === productId.trim());
+      if (found) {
+        setMessage({ type: 'error', text: 'Product ID already exists. Please change it.' });
+        return;
+      }
+    } else if (idExists) {
       setMessage({ type: 'error', text: 'Product ID already exists. Please change it.' });
       return;
     }
@@ -121,29 +228,41 @@ const AddProduct = () => {
 
     setIsAdding(true);
     setMessage({ type: '', text: '' });
-    try {
-      const data = await jsonpRequest(`${BASE_URL}?action=addProduct&data=${encodeURIComponent(JSON.stringify(payload))}`);
-      if (data.success) {
-        setMessage({ type: 'success', text: `Product "${productName}" added successfully!` });
-        // Reset form (keep the next S.No incremented)
-        setSNo(data.nextSNo || sNo + 1);
-        setProductId('');
-        setProductName('');
-        setProductNameEn('');
-        setQuantity('');
-        setRate('');
-        setIdExists(false);
-      } else {
-        setMessage({ type: 'error', text: 'Failed to add product: ' + data.message });
-      }
-    } catch (error) {
-      setMessage({ type: 'error', text: 'Network error while adding product.' });
-    } finally {
-      setIsAdding(false);
+
+    const res = await jsonpRequest(
+      `${BASE_URL}?action=addProduct&data=${encodeURIComponent(JSON.stringify(payload))}`
+    );
+    if (res.success) {
+      setMessage({ type: 'success', text: `Product "${productName}" added successfully!` });
+      // Increment S.No locally
+      setSNo((prev) => (prev !== null ? prev + 1 : 1));
+      // Reset form
+      setProductId('');
+      setProductName('');
+      setProductNameEn('');
+      setQuantity('');
+      setRate('');
+      setIdExists(false);
+      // Invalidate product cache so Dashboard and others see the change
+      localStorage.removeItem(PRODUCTS_CACHE_KEY);
+      // Update local product list (add the new product)
+      const newProduct = {
+        product_id: payload.product_id,
+        product_name: payload.product_name,
+        product_name_en: payload.product_name_en,
+        quantity: payload.quantity,
+        rate: payload.rate,
+        s_no: payload.s_no,
+      };
+      setAllProducts((prev) => [...prev, newProduct]);
+      setCachedProducts([...allProducts, newProduct]);
+    } else {
+      setMessage({ type: 'error', text: 'Failed to add product: ' + res.message });
     }
+    setIsAdding(false);
   };
 
-  // ---------- Message box (shared) ----------
+  // ---------- Render message ----------
   const renderMessage = () => {
     if (!message.text) return null;
     const styles = {
@@ -167,12 +286,12 @@ const AddProduct = () => {
     <div className="min-h-screen bg-gray-50 px-3 py-4 sm:p-6">
       <div className="max-w-3xl mx-auto">
         <button
-                      onClick={() => navigate('/dashboard')}
-                      className="p-2 rounded-full bg-white shadow-sm border border-gray-200 hover:bg-gray-50 transition-colors"
-                      aria-label="Back to Dashboard"
-                    >
-                      <FaArrowLeft className="text-gray-600 w-4 h-4" />
-                    </button>
+          onClick={() => navigate('/dashboard')}
+          className="p-2 rounded-full bg-white shadow-sm border border-gray-200 hover:bg-gray-50 transition-colors"
+          aria-label="Back to Dashboard"
+        >
+          <FaArrowLeft className="text-gray-600 w-4 h-4" />
+        </button>
         <h1 className="text-xl sm:text-2xl font-bold text-gray-800 mb-4 sm:mb-6">
           Add New Product
         </h1>
@@ -203,7 +322,8 @@ const AddProduct = () => {
                   value={productId}
                   onChange={(e) => {
                     setProductId(e.target.value);
-                    setIdExists(false); // reset check status on change
+                    setIdExists(false);
+                    setMessage({ type: '', text: '' });
                   }}
                   placeholder="e.g., P001"
                   className="flex-1 min-w-0 px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition text-base"
@@ -218,10 +338,7 @@ const AddProduct = () => {
                   {checkLoading ? 'Checking...' : 'Check ID'}
                 </button>
               </div>
-
-              {/* Error / info message shown right below the Product ID field */}
               <div className="mt-2">{renderMessage()}</div>
-
               {idExists && !message.text && (
                 <p className="text-red-500 text-sm mt-1">This ID is already taken.</p>
               )}

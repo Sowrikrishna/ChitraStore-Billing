@@ -1,7 +1,10 @@
+
+
 // ViewBills.jsx
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FaArrowLeft } from 'react-icons/fa';
+
 // Apps Script base URL (from environment variable)
 const APPS_SCRIPT_URL = import.meta.env.VITE_BILL_URL;
 
@@ -35,8 +38,7 @@ function jsonpRequest(url, timeout = 30000) {
   });
 }
 
-// Format an epoch-millis timestamp -> "DD-MM-YYYY" (fixed to Asia/Kolkata so it
-// doesn't depend on the browser's local timezone)
+// Format an epoch-millis timestamp -> "DD-MM-YYYY" (fixed to Asia/Kolkata)
 const formatDate = (ts) => {
   if (!ts) return '-';
   try {
@@ -102,7 +104,7 @@ const ViewBills = () => {
       state: {
         products: products,
         quotationNo: bill.quotationNo,
-        timestamp: bill.timestamp,   // pass the bill's saved time through
+        timestamp: bill.timestamp,
         autoPrint: true,
         from: 'view-bills'
       }
@@ -120,9 +122,26 @@ const ViewBills = () => {
       state: {
         products: products,
         quotationNo: bill.quotationNo,
-        timestamp: bill.timestamp,   // pass the bill's saved time through
+        timestamp: bill.timestamp,
         autoPrint: false,
         from: 'view-bills'
+      }
+    });
+  };
+
+  const handleEdit = (bill) => {
+    let products = [];
+    try {
+      products = JSON.parse(bill.products);
+    } catch (e) {
+      products = [];
+    }
+    navigate('/edit-bill', {
+      state: {
+        products: products,
+        quotationNo: bill.quotationNo,
+        customerName: bill.customerName,
+        timestamp: bill.timestamp,
       }
     });
   };
@@ -147,11 +166,12 @@ const ViewBills = () => {
     <div className="min-h-screen bg-gray-50 p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         <button
-                      onClick={() => navigate('/')}
-                      className="p-2 rounded-full bg-white shadow-sm border border-gray-200 hover:bg-gray-50 transition-colors"
-                      aria-label="Back to Dashboard">
-                        <FaArrowLeft className="text-gray-600 w-4 h-4" />
-                    </button>
+          onClick={() => navigate('/')}
+          className="p-2 rounded-full bg-white shadow-sm border border-gray-200 hover:bg-gray-50 transition-colors"
+          aria-label="Back to Dashboard"
+        >
+          <FaArrowLeft className="text-gray-600 w-4 h-4" />
+        </button>
         <h1 className="text-2xl font-bold text-gray-800 mb-6">View Bills</h1>
 
         {bills.length === 0 ? (
@@ -205,6 +225,17 @@ const ViewBills = () => {
                           >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                            </svg>
+                          </button>
+                          {/* ✨ NEW: Edit button */}
+                          <button
+                            onClick={() => handleEdit(bill)}
+                            className="p-1.5 text-yellow-600 hover:text-yellow-800 hover:bg-yellow-50 rounded-full transition"
+                            title="Edit Bill"
+                            aria-label="Edit Bill"
+                          >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                             </svg>
                           </button>
                         </div>

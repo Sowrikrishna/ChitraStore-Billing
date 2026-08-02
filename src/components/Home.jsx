@@ -11,6 +11,7 @@ import EditProduct from '../routes/EditProduct';
 import PrintView from '../bills/PrintView';
 import ViewBills from '../bills/VeiwBills';
 import ViewProducts from '../routes/ViewProducts';
+import EditBill from '../bills/EditBill';
 
 const Home = ({ onLogout }) => {
   return (
@@ -26,6 +27,7 @@ const Home = ({ onLogout }) => {
         <Route path="/view-bills" element={<ViewBills />} />
         <Route path="/print" element={<PrintView />} />
         <Route path="/view-products" element={<ViewProducts />} />
+        <Route path='/edit-bill' element={<EditBill/>}/>
       </Routes>
       <Footer />
     </div>

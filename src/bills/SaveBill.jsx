@@ -1,7 +1,7 @@
 
 
 // SaveBill.jsx
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 
 const SAVE_URL = import.meta.env.VITE_BILL_URL;
 
@@ -11,13 +11,24 @@ const SaveBill = ({ isOpen, onClose, products, totalAmount, onSaveSuccess }) => 
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
 
-  const handleSubmit = async (e) => {
+  const iframeRef = useRef(null);
+  const formRef = useRef(null);
+
+  const handleSubmit = (e) => {
     e.preventDefault();
     if (!customerName.trim()) {
       alert('Please enter a customer name.');
       return;
     }
+    if (!products || products.length === 0) {
+      alert('Cannot save an empty bill.');
+      return;
+    }
 
+    setLoading(true);
+    setError(null);
+
+    // Clean product data
     const cleanedProducts = products.map(({ product_id, product_name, quantity, rate, amount }) => ({
       product_id,
       product_name,
@@ -27,28 +38,52 @@ const SaveBill = ({ isOpen, onClose, products, totalAmount, onSaveSuccess }) => 
     }));
 
     const payload = {
+      action: 'newBill',
       customerName: customerName.trim(),
       products: cleanedProducts,
-      totalAmount: totalAmount
+      totalAmount: totalAmount,
+      timestamp: Date.now(),
     };
 
-    setLoading(true);
-    setError(null);
-    try {
-      await fetch(SAVE_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+    // Create or reuse a hidden iframe
+    if (!iframeRef.current) {
+      const iframe = document.createElement('iframe');
+      iframe.name = 'saveBillIframe';
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
+      iframeRef.current = iframe;
+    }
+
+    const handleLoad = () => {
+      iframeRef.current.removeEventListener('load', handleLoad);
+      setLoading(false);
       setSuccess(true);
       if (onSaveSuccess) onSaveSuccess();
       setTimeout(() => onClose(), 1500);
-    } catch (err) {
-      setError(err.message || 'Network error. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+    };
+    iframeRef.current.addEventListener('load', handleLoad);
+
+    // Build hidden form with a single 'payload' field
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = SAVE_URL;
+    form.target = 'saveBillIframe';
+    form.enctype = 'multipart/form-data';
+    form.style.display = 'none';
+
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'payload';
+    input.value = JSON.stringify(payload);
+    form.appendChild(input);
+
+    document.body.appendChild(form);
+    formRef.current = form;
+    form.submit();
+
+    setTimeout(() => {
+      if (form.parentNode) form.parentNode.removeChild(form);
+    }, 100);
   };
 
   if (!isOpen) return null;
