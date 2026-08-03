@@ -1,5 +1,4 @@
 
-
 // SaveBill.jsx
 import React, { useState, useRef } from 'react';
 
@@ -142,3 +141,4 @@ const SaveBill = ({ isOpen, onClose, products, totalAmount, onSaveSuccess }) => 
 };
 
 export default SaveBill;
+
