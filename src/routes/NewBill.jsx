@@ -1,25 +1,20 @@
 
-
+// src/components/NewBill.jsx
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FaArrowLeft } from 'react-icons/fa';
 import { useNavigate } from 'react-router-dom';
+import { useAppContext } from '../context/AppContext';
 import SaveBill from '../bills/SaveBill';
 
-const BASE_URL = import.meta.env.VITE_PRODUCT_URL;
 const APPS_SCRIPT_URL = import.meta.env.VITE_BILL_URL;
 
 const MAX_RESULTS = 50;
 const STORAGE_KEY = 'newbill_selected_products';
 const QUOTATION_STORAGE_KEY = 'last_quotation_no';
-
-// Cache keys and TTL (5 minutes)
-const PRODUCTS_CACHE_KEY = 'newbill_products_cache';
 const QUOTATION_CACHE_KEY = 'newbill_quotation_cache';
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
-// ------------------------------------------------------------
 // JSONP helper (same as before)
-// ------------------------------------------------------------
 function jsonpRequest(url, timeout = 15000) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
@@ -49,9 +44,7 @@ function jsonpRequest(url, timeout = 15000) {
   });
 }
 
-// ------------------------------------------------------------
-// Cache helpers (localStorage with TTL)
-// ------------------------------------------------------------
+// Cache helpers for quotation only
 function getCached(key) {
   try {
     const raw = localStorage.getItem(key);
@@ -70,14 +63,10 @@ function getCached(key) {
 function setCached(key, data) {
   try {
     localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
-  } catch {
-    // ignore
-  }
+  } catch {}
 }
 
-// ------------------------------------------------------------
 // Scoring function (unchanged)
-// ------------------------------------------------------------
 function scoreProduct(product, q) {
   const id = product._id;
   const name = product._name;
@@ -90,13 +79,13 @@ function scoreProduct(product, q) {
   return { score: 6, pos: name.indexOf(q) };
 }
 
-// ------------------------------------------------------------
 // Main Component
-// ------------------------------------------------------------
 const NewBill = () => {
   const navigate = useNavigate();
+  const { products, error: contextError, refreshData } = useAppContext();
+  
 
-  // State
+  // Local state
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedProducts, setSelectedProducts] = useState(() => {
     try {
@@ -107,10 +96,9 @@ const NewBill = () => {
     }
   });
   const [highlightIndex, setHighlightIndex] = useState(-1);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false); // for quotation only
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [allProducts, setAllProducts] = useState([]);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(null); // local error (for quotation or product context)
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [quotationNo, setQuotationNo] = useState(null);
   const [fetchingQuotation, setFetchingQuotation] = useState(true);
@@ -118,7 +106,6 @@ const NewBill = () => {
   // Refs
   const searchInputRef = useRef(null);
   const dropdownRef = useRef(null);
-  const fetchingRef = useRef(false);
   const qtyRefsDesktop = useRef({});
   const rateRefsDesktop = useRef({});
   const qtyRefsMobile = useRef({});
@@ -136,69 +123,29 @@ const NewBill = () => {
     return rateRefsMobile.current[index];
   };
 
-  // ------------------------------------------------------------
-  // Fetch products with caching
-  // ------------------------------------------------------------
-  const fetchProducts = useCallback(async (forceRefresh = false) => {
-    if (fetchingRef.current) return;
-    fetchingRef.current = true;
 
-    // Use cache if available and not force refreshing
-    if (!forceRefresh) {
-      const cached = getCached(PRODUCTS_CACHE_KEY);
-      if (cached) {
-        setAllProducts(cached);
-        setError(null);
-        setLoading(false);
-        fetchingRef.current = false;
-        // Still refresh in background after a small delay
-        setTimeout(() => fetchProducts(true), 100);
-        return;
-      }
-    }
+  
 
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await jsonpRequest(`${BASE_URL}?action=getProducts`);
-      if (data.success) {
-        const withSearchKeys = data.data.map((p) => ({
-          ...p,
-          _id: (p.product_id || '').toString().toLowerCase().trim(),
-          _name: (p.product_name || '').toString().toLowerCase().trim(),
-        }));
-        setAllProducts(withSearchKeys);
-        setCached(PRODUCTS_CACHE_KEY, withSearchKeys);
-        setError(null);
-      } else {
-        throw new Error(data.message || 'Failed to load products.');
-      }
-    } catch (err) {
-      // If we have cached data, keep it and show a warning
-      const cached = getCached(PRODUCTS_CACHE_KEY);
-      if (cached) {
-        setAllProducts(cached);
-        setError(`Background refresh failed: ${err.message}. Showing cached products.`);
-      } else {
-        setError(err.message);
-      }
-    } finally {
-      setLoading(false);
-      fetchingRef.current = false;
-    }
-  }, []);
+  // ------------------------------------------------------------
+  // Use products from context, add search keys
+  // ------------------------------------------------------------
+  const allProducts = useMemo(() => {
+    return products.map((p) => ({
+      ...p,
+      _id: (p.product_id || '').toString().toLowerCase().trim(),
+      _name: (p.product_name || '').toString().toLowerCase().trim(),
+    }));
+  }, [products]);
 
   // ------------------------------------------------------------
   // Fetch quotation number with caching
   // ------------------------------------------------------------
   const fetchQuotation = useCallback(async () => {
     setFetchingQuotation(true);
-    // Try cache first
     const cached = getCached(QUOTATION_CACHE_KEY);
     if (cached) {
       setQuotationNo(cached);
       setFetchingQuotation(false);
-      // Still fetch in background to update
       setTimeout(() => {
         fetchQuotationFresh();
       }, 100);
@@ -215,14 +162,12 @@ const NewBill = () => {
         setCached(QUOTATION_CACHE_KEY, data.lastQuotation);
         localStorage.setItem(QUOTATION_STORAGE_KEY, data.lastQuotation);
       } else {
-        // fallback
         const defaultNo = 'Q-0';
         setQuotationNo(defaultNo);
         setCached(QUOTATION_CACHE_KEY, defaultNo);
         localStorage.setItem(QUOTATION_STORAGE_KEY, defaultNo);
       }
     } catch (err) {
-      // Use localStorage fallback
       const stored = localStorage.getItem(QUOTATION_STORAGE_KEY);
       if (stored) {
         setQuotationNo(stored);
@@ -242,17 +187,22 @@ const NewBill = () => {
   // Effects
   // ------------------------------------------------------------
   useEffect(() => {
-    fetchProducts(false);
     fetchQuotation();
-
-    // Refresh cache periodically
     const interval = setInterval(() => {
-      fetchProducts(true);
-      fetchQuotationFresh(); // refresh quotation too
+      fetchQuotationFresh();
     }, CACHE_TTL);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // If context error, show it as local error (but allow user to retry)
+  useEffect(() => {
+    if (contextError) {
+      setError(`Products: ${contextError}`);
+    } else {
+      setError(null);
+    }
+  }, [contextError]);
 
   // Persist selected products
   useEffect(() => {
@@ -317,7 +267,7 @@ const NewBill = () => {
   }, [searchTerm, filteredProducts.length]);
 
   // ------------------------------------------------------------
-  // Event Handlers
+  // Event Handlers (unchanged)
   // ------------------------------------------------------------
   const handleSelectProduct = useCallback(
     (product) => {
@@ -435,7 +385,6 @@ const NewBill = () => {
 
   const handleSaveSuccess = () => {
     setShowSaveModal(false);
-    // Generate next quotation number locally
     if (quotationNo) {
       const match = quotationNo.match(/Q-(\d+)/);
       if (match) {
@@ -508,6 +457,7 @@ const NewBill = () => {
                   autoFocus
                 />
 
+                {/* Show global loading indicator (optional) */}
                 {loading && (
                   <div className="absolute right-3 top-2.5 sm:top-2.5">
                     <div className="animate-spin h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full"></div>
@@ -553,7 +503,12 @@ const NewBill = () => {
                   <div className="mt-2 text-sm text-red-600">
                     Error: {error}
                     <button
-                      onClick={() => fetchProducts(true)}
+                      onClick={() => {
+                        // Retry: refresh context data
+                        refreshData();
+                        // Also refresh quotation
+                        fetchQuotationFresh();
+                      }}
                       className="ml-2 underline hover:no-underline"
                     >
                       Retry
@@ -580,7 +535,7 @@ const NewBill = () => {
             </div>
           </div>
 
-          {/* RIGHT PANEL - Bill items */}
+          {/* RIGHT PANEL - Bill items (unchanged) */}
           <div className="lg:w-2/3 w-full">
             <div className="bg-white rounded-xl shadow-lg overflow-hidden">
               {/* Desktop table */}

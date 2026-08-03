@@ -10,7 +10,7 @@ const BASE_URL = import.meta.env.VITE_PRODUCT_URL;
 // ============================================================
 // ROBUST JSONP HELPER (never rejects, retries, returns { success, ... })
 // ============================================================
-function jsonpRequest(url, timeout = 20000, retries = 2) {
+function jsonpRequest(url, timeout = 30000, retries = 2) {
   return new Promise((resolve) => {
     const attempt = (remaining) => {
       const script = document.createElement('script');
@@ -426,3 +426,5 @@ const AddProduct = () => {
 };
 
 export default AddProduct;
+
+

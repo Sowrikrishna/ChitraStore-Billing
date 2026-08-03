@@ -9,6 +9,7 @@ const A4_HEIGHT_MM = 297;
 const MM_TO_PX = 3.7795275591;
 const A4_WIDTH_PX = Math.round(A4_WIDTH_MM * MM_TO_PX); // ~794px
 const PREVIEW_SIDE_GUTTER_PX = 16;
+const CANVAS_SCALE = 2; // must match the `scale` option passed to html2canvas below
 
 const PrintView = () => {
   const location = useLocation();
@@ -110,6 +111,40 @@ const PrintView = () => {
     );
   };
 
+  // Helper: collect "do not split" element boundaries (in canvas-pixel space)
+  // so page breaks can snap to a safe boundary instead of slicing mid-row.
+  const getSafeBreakpoints = (root, canvasHeightPx) => {
+    const rootRect = root.getBoundingClientRect();
+    const noSplitEls = Array.from(
+      root.querySelectorAll('tr, .grand-total, .footer, .bill-header, thead')
+    );
+
+    const breakpoints = new Set([0, canvasHeightPx]);
+    noSplitEls.forEach((el) => {
+      const rect = el.getBoundingClientRect();
+      const top = Math.round((rect.top - rootRect.top) * CANVAS_SCALE);
+      const bottom = Math.round((rect.bottom - rootRect.top) * CANVAS_SCALE);
+      if (top >= 0 && top <= canvasHeightPx) breakpoints.add(top);
+      if (bottom >= 0 && bottom <= canvasHeightPx) breakpoints.add(bottom);
+    });
+
+    return Array.from(breakpoints).sort((a, b) => a - b);
+  };
+
+  // Given a desired ideal end for a page, find the closest safe boundary
+  // that is > pageStart and <= idealEnd. Falls back to idealEnd if no
+  // element fits on the remaining space (e.g. a single row taller than a page).
+  const snapToSafeBreak = (breakpoints, pageStart, idealEnd) => {
+    let best = null;
+    for (let i = 0; i < breakpoints.length; i += 1) {
+      const bp = breakpoints[i];
+      if (bp > pageStart && bp <= idealEnd) {
+        best = bp;
+      }
+    }
+    return best !== null ? best : idealEnd;
+  };
+
   // Helper: slice canvas to data URL
   const canvasSliceToDataUrl = (sourceCanvas, startY, sliceHeight) => {
     const safeHeight = Math.max(1, Math.floor(sliceHeight));
@@ -187,7 +222,7 @@ const PrintView = () => {
       }
 
       const canvas = await html2canvas(clone, {
-        scale: 2,
+        scale: CANVAS_SCALE,
         useCORS: true,
         logging: false,
         backgroundColor: '#ffffff',
@@ -218,13 +253,24 @@ const PrintView = () => {
         const { dataUrl } = canvasSliceToDataUrl(canvas, 0, canvas.height);
         pdf.addImage(dataUrl, 'JPEG', 0, 0, imgWidthMm, totalImgHeightMm);
       } else {
+        // Row-aware pagination: snap each page break to the nearest safe
+        // boundary (row/section edge) instead of a raw pixel offset, so a
+        // table row never gets sliced in half between two pages.
+        const breakpoints = getSafeBreakpoints(clone, canvas.height);
         const pageHeightPx = Math.floor((pageHeightMm * canvas.width) / imgWidthMm);
+
         let renderedHeightPx = 0;
         let pageIndex = 0;
         const maxPages = 50;
 
         while (renderedHeightPx < canvas.height && pageIndex < maxPages) {
-          const sliceHeightPx = Math.min(pageHeightPx, canvas.height - renderedHeightPx);
+          const idealEnd = Math.min(renderedHeightPx + pageHeightPx, canvas.height);
+          const end =
+            idealEnd >= canvas.height
+              ? canvas.height
+              : snapToSafeBreak(breakpoints, renderedHeightPx, idealEnd);
+
+          const sliceHeightPx = end - renderedHeightPx;
           if (sliceHeightPx <= 0) break;
 
           const { dataUrl, heightPx } = canvasSliceToDataUrl(
@@ -311,6 +357,18 @@ const PrintView = () => {
                   .preview-scale-inner {
                     all: revert !important;
                   }
+                  /* Prevent the browser's own print pagination from cutting
+                     a row/section in half across two physical pages. */
+                  .bill-table tr,
+                  .grand-total,
+                  .footer,
+                  .bill-header {
+                    break-inside: avoid;
+                    page-break-inside: avoid;
+                  }
+                  .bill-table thead {
+                    display: table-header-group;
+                  }
                 }
                 .print-wrapper {
                   width: 210mm;
@@ -321,7 +379,7 @@ const PrintView = () => {
                   font-family: 'Courier New', monospace;
                   font-size: 12pt;
                   line-height: 1.5;
-                  font-weight: 700 !important;  /* ensure all text is bold by default */
+                  font-weight: 700;
                   box-sizing: border-box;
                   overflow: visible !important;
                 }
@@ -332,6 +390,7 @@ const PrintView = () => {
                   -webkit-font-smoothing: antialiased;
                   box-sizing: border-box;
                 }
+                /* All text in the bill is bold. */
                 .tamil-symbol {
                   text-align: center;
                   font-size: 12pt;
@@ -345,10 +404,8 @@ const PrintView = () => {
                   padding-bottom: 5mm;
                   margin-bottom: 6mm;
                 }
-                .store-info { font-weight: 700; }
                 .store-name {
                   font-size: 20pt;
-                  font-weight: 700;
                   margin-bottom: 2mm;
                 }
                 .quotation-info {
@@ -357,11 +414,7 @@ const PrintView = () => {
                 }
                 .quotation-title {
                   font-size: 16pt;
-                  font-weight: 700;
                   margin-bottom: 2mm;
-                }
-                .quotation-info .quotation-no {
-                  font-weight: 700;
                 }
                 .bill-table {
                   width: 100%;
@@ -379,14 +432,12 @@ const PrintView = () => {
                   border-bottom: 2px solid #333;
                   text-align: left;
                   padding: 3mm 2mm;
-                  font-weight: 700 !important;
                   white-space: nowrap;
                 }
                 .bill-table td {
                   padding: 2.5mm 2mm;
                   border-bottom: 1px dotted #ccc;
                   vertical-align: top;
-                  font-weight: 700 !important;  /* explicitly bold for all cells */
                   font-size: 12pt;
                 }
                 .bill-table td.product-cell {
@@ -399,11 +450,9 @@ const PrintView = () => {
                 .bill-table td.right,
                 .bill-table th.right {
                   font-variant-numeric: tabular-nums;
-                  font-weight: 700 !important;
                   white-space: nowrap;
                 }
                 .bill-table td.amount-cell {
-                  font-weight: 700 !important;
                   font-variant-numeric: tabular-nums;
                   white-space: nowrap;
                 }
@@ -417,11 +466,9 @@ const PrintView = () => {
                 }
                 .grand-total .total-items {
                   font-size: 16pt;
-                  font-weight: 700 !important;
                 }
                 .grand-total .total-amount {
-                  font-weight: 700 !important;
-                  font-size: 18pt;          /* increased for prominence */
+                  font-size: 18pt;
                   font-variant-numeric: tabular-nums;
                   white-space: nowrap;
                 }
@@ -439,7 +486,6 @@ const PrintView = () => {
                   justify-content: center;
                   gap: 2mm;
                   font-size: 13pt;
-                  font-weight: 700;
                   color: #075E54;
                 }
                 .preview-viewport {
@@ -489,10 +535,10 @@ const PrintView = () => {
                     <thead>
                       <tr>
                         <th className="center">S.No</th>
-                        <th>Product</th>
-                        <th className="right">Qty</th>
-                        <th className="right">Rate</th>
-                        <th className="right">Amount</th>
+                        <th>PRODUCT</th>
+                        <th className="right">QTY</th>
+                        <th className="right">RATE</th>
+                        <th className="right">AMOUNT</th>
                       </tr>
                     </thead>
                     <tbody>

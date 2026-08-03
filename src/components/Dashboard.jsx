@@ -1,6 +1,7 @@
 
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   FaReceipt,
   FaFileAlt,
@@ -13,263 +14,73 @@ import {
   FaShoppingCart,
   FaChartLine,
   FaListUl,
-  FaSpinner,
   FaSync,
   FaExclamationTriangle,
 } from 'react-icons/fa';
-import { useNavigate } from 'react-router-dom';
+import { useAppContext } from '../context/AppContext'; // adjust path
 
-// ------------------------------------------------------------
-// JSONP helper (unchanged – but we add retry)
-// ------------------------------------------------------------
-function jsonpRequest(url, timeout = 15000) {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    const callback = 'jsonp_callback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Request timed out after ' + timeout + 'ms'));
-    }, timeout);
-
-    window[callback] = function (data) {
-      cleanup();
-      resolve(data);
-    };
-
-    function cleanup() {
-      clearTimeout(timer);
-      delete window[callback];
-      if (script.parentNode) script.parentNode.removeChild(script);
-    }
-
-    script.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + callback;
-    script.onerror = function () {
-      cleanup();
-      reject(new Error('Network error – check URL and CORS settings.'));
-    };
-    document.body.appendChild(script);
-  });
-}
-
-// ------------------------------------------------------------
-// Environment variables
-// ------------------------------------------------------------
-const PRODUCT_API = import.meta.env.VITE_PRODUCT_URL;
-const BILL_API = import.meta.env.VITE_BILL_URL;
-
-// ------------------------------------------------------------
-// Cache helper (localStorage with TTL)
-// ------------------------------------------------------------
-const CACHE_KEY = 'dashboardCache';
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-
-function getCachedData() {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const cached = JSON.parse(raw);
-    if (Date.now() - cached.timestamp > CACHE_TTL) {
-      localStorage.removeItem(CACHE_KEY);
-      return null;
-    }
-    return cached.data;
-  } catch {
-    return null;
-  }
-}
-
-function setCachedData(data) {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify({ data, timestamp: Date.now() }));
-  } catch {
-    // ignore
-  }
-}
-
-// ------------------------------------------------------------
-// Dashboard component
-// ------------------------------------------------------------
 const Dashboard = () => {
   const navigate = useNavigate();
+  const { products, bills, loading, error, lastUpdated, refreshData } = useAppContext();
   const [toast, setToast] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [lastUpdated, setLastUpdated] = useState(null);
 
-  // Summary stats
-  const [totalBills, setTotalBills] = useState(0);
-  const [totalProducts, setTotalProducts] = useState(0);
-  const [todaySales, setTodaySales] = useState(0);
-  const [monthlyRevenue, setMonthlyRevenue] = useState(0);
-  const [recentBills, setRecentBills] = useState([]);
+  // ---- Compute stats ----
+  const totalProducts = products.length;
+  const totalBills = bills.length;
 
-  // Use ref to prevent multiple simultaneous fetches
-  const fetchingRef = useRef(false);
+  const now = new Date();
+  const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
 
-  // Core data fetch function
-  const fetchData = async (forceRefresh = false) => {
-    // If already fetching, ignore
-    if (fetchingRef.current) return;
-    fetchingRef.current = true;
-
-    // If we have cached data and not forcing refresh, use it immediately
-    if (!forceRefresh) {
-      const cached = getCachedData();
-      if (cached) {
-        applyData(cached);
-        setError(null);
-        setLoading(false);
-        fetchingRef.current = false;
-        // Still fetch in background to update
-        // We'll do this after a small delay to avoid blocking UI
-        setTimeout(() => {
-          fetchData(true);
-        }, 100);
-        return;
+  let todaySales = 0;
+  let monthlyRevenue = 0;
+  bills.forEach((bill) => {
+    let billDate;
+    if (bill.timestamp) {
+      if (typeof bill.timestamp === 'number') {
+        billDate = new Date(bill.timestamp);
+      } else {
+        billDate = new Date(bill.timestamp);
       }
+    } else {
+      return;
     }
+    if (isNaN(billDate.getTime())) return;
 
-    // Otherwise, show loading if no cache
-    setLoading(true);
-    setError(null);
-
-    try {
-      // Use a single AbortController to cancel if needed (but we don't have abort for JSONP)
-      // We'll still try with timeout
-      const [productsRes, billsRes] = await Promise.all([
-        jsonpRequest(`${PRODUCT_API}?action=getProducts`),
-        jsonpRequest(`${BILL_API}?action=getBills`),
-      ]);
-
-      // Process data
-      let products = [];
-      let bills = [];
-      if (productsRes.success) {
-        products = productsRes.data || [];
-      } else {
-        throw new Error(productsRes.message || 'Failed to fetch products.');
-      }
-
-      if (billsRes.success) {
-        bills = billsRes.data || [];
-      } else {
-        throw new Error(billsRes.message || 'Failed to fetch bills.');
-      }
-
-      // Compute stats
-      const totalProductsCount = products.length;
-      const totalBillsCount = bills.length;
-
-      const now = new Date();
-      const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const currentMonth = now.getMonth();
-      const currentYear = now.getFullYear();
-
-      let todayTotal = 0;
-      let monthTotal = 0;
-
-      bills.forEach((bill) => {
-        let billDate;
-        if (bill.timestamp) {
-          if (typeof bill.timestamp === 'number') {
-            billDate = new Date(bill.timestamp);
-          } else {
-            billDate = new Date(bill.timestamp);
-          }
-        } else {
-          return;
-        }
-        if (isNaN(billDate.getTime())) return;
-
-        const amount = parseFloat(bill.totalAmount) || 0;
-
-        if (
-          billDate.getFullYear() === todayDate.getFullYear() &&
-          billDate.getMonth() === todayDate.getMonth() &&
-          billDate.getDate() === todayDate.getDate()
-        ) {
-          todayTotal += amount;
-        }
-
-        if (
-          billDate.getFullYear() === currentYear &&
-          billDate.getMonth() === currentMonth
-        ) {
-          monthTotal += amount;
-        }
-      });
-
-      const sorted = [...bills]
-        .filter((b) => b.timestamp)
-        .sort((a, b) => {
-          const tA = typeof a.timestamp === 'number' ? a.timestamp : new Date(a.timestamp).getTime();
-          const tB = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp).getTime();
-          return tB - tA;
-        })
-        .slice(0, 4)
-        .map((bill) => ({
-          id: bill.quotationNo || 'Unknown',
-          customer: bill.customerName || 'Unknown',
-          amount: `₹${parseFloat(bill.totalAmount || 0).toFixed(2)}`,
-          status: 'Paid',
-        }));
-
-      const data = {
-        totalBills: totalBillsCount,
-        totalProducts: totalProductsCount,
-        todaySales: todayTotal,
-        monthlyRevenue: monthTotal,
-        recentBills: sorted,
-      };
-
-      // Apply and cache
-      applyData(data);
-      setCachedData(data);
-      setLastUpdated(new Date().toLocaleTimeString());
-      setError(null);
-    } catch (err) {
-      // If we have cached data, keep showing it and just set a warning
-      const cached = getCachedData();
-      if (cached) {
-        applyData(cached);
-        setError(`Background refresh failed: ${err.message}. Showing cached data.`);
-      } else {
-        setError(err.message);
-      }
-    } finally {
-      setLoading(false);
-      fetchingRef.current = false;
+    const amount = parseFloat(bill.totalAmount) || 0;
+    if (
+      billDate.getFullYear() === todayDate.getFullYear() &&
+      billDate.getMonth() === todayDate.getMonth() &&
+      billDate.getDate() === todayDate.getDate()
+    ) {
+      todaySales += amount;
     }
-  };
+    if (
+      billDate.getFullYear() === currentYear &&
+      billDate.getMonth() === currentMonth
+    ) {
+      monthlyRevenue += amount;
+    }
+  });
 
-  // Helper to apply data to state
-  const applyData = (data) => {
-    setTotalBills(data.totalBills);
-    setTotalProducts(data.totalProducts);
-    setTodaySales(data.todaySales);
-    setMonthlyRevenue(data.monthlyRevenue);
-    setRecentBills(data.recentBills);
-  };
+  // Recent bills (latest 4)
+  const recentBills = [...bills]
+    .filter(b => b.timestamp)
+    .sort((a, b) => {
+      const tA = typeof a.timestamp === 'number' ? a.timestamp : new Date(a.timestamp).getTime();
+      const tB = typeof b.timestamp === 'number' ? b.timestamp : new Date(b.timestamp).getTime();
+      return tB - tA;
+    })
+    .slice(0, 4)
+    .map((bill) => ({
+      id: bill.quotationNo || 'Unknown',
+      customer: bill.customerName || 'Unknown',
+      amount: `₹${parseFloat(bill.totalAmount || 0).toFixed(2)}`,
+      status: 'Paid',
+    }));
 
-  // Fetch on mount
-  useEffect(() => {
-    fetchData(false);
-    // Set up interval to refresh every 5 minutes
-    const interval = setInterval(() => {
-      fetchData(true);
-    }, CACHE_TTL);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Manual refresh
-  const handleRefresh = () => {
-    fetchData(true);
-  };
-
-  // Formatting helpers
-  const formatCurrency = (value) => {
-    return `₹ ${value.toLocaleString('en-IN')}`;
-  };
+  const formatCurrency = (value) => `₹ ${value.toLocaleString('en-IN')}`;
 
   const currentDate = new Date().toLocaleDateString('en-IN', {
     weekday: 'long',
@@ -278,7 +89,7 @@ const Dashboard = () => {
     day: 'numeric',
   });
 
-  // Quick action cards
+  // ---- Quick Action Cards (FULL list) ----
   const actionCards = [
     {
       id: 'new-bill',
@@ -342,11 +153,12 @@ const Dashboard = () => {
     },
   ];
 
+  // Summary cards (unchanged)
   const summaryData = [
     {
       id: 1,
       label: 'Total Bills',
-      value: loading && !getCachedData() ? '...' : totalBills,
+      value: loading && !products.length && !bills.length ? '...' : totalBills,
       icon: FaReceipt,
       border: 'border-blue-500',
       iconBg: 'bg-blue-50',
@@ -355,7 +167,7 @@ const Dashboard = () => {
     {
       id: 2,
       label: 'Total Products',
-      value: loading && !getCachedData() ? '...' : totalProducts,
+      value: loading && !products.length ? '...' : totalProducts,
       icon: FaBoxes,
       border: 'border-emerald-500',
       iconBg: 'bg-emerald-50',
@@ -364,7 +176,7 @@ const Dashboard = () => {
     {
       id: 3,
       label: "Today's Sales",
-      value: loading && !getCachedData() ? '...' : formatCurrency(todaySales),
+      value: loading && !bills.length ? '...' : formatCurrency(todaySales),
       icon: FaShoppingCart,
       border: 'border-purple-500',
       iconBg: 'bg-purple-50',
@@ -374,7 +186,7 @@ const Dashboard = () => {
     {
       id: 4,
       label: 'Monthly Revenue',
-      value: loading && !getCachedData() ? '...' : formatCurrency(monthlyRevenue),
+      value: loading && !bills.length ? '...' : formatCurrency(monthlyRevenue),
       icon: FaChartLine,
       border: 'border-orange-500',
       iconBg: 'bg-orange-50',
@@ -404,7 +216,7 @@ const Dashboard = () => {
               {currentDate}
             </div>
             <button
-              onClick={handleRefresh}
+              onClick={refreshData}
               disabled={loading}
               className="p-2 bg-white border border-gray-200 rounded-lg shadow-sm hover:bg-gray-50 disabled:opacity-50 transition-colors"
               title="Refresh data"
@@ -420,7 +232,7 @@ const Dashboard = () => {
             <FaExclamationTriangle className="flex-shrink-0" />
             <span>{error}</span>
             <button
-              onClick={handleRefresh}
+              onClick={refreshData}
               className="ml-auto px-3 py-1 bg-yellow-100 hover:bg-yellow-200 rounded text-sm"
             >
               Retry
@@ -457,6 +269,7 @@ const Dashboard = () => {
           })}
         </section>
 
+        {/* Main grid: Quick Actions (2/3) + Recent Bills (1/3) */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Quick Actions */}
           <section className="lg:col-span-2">
@@ -553,7 +366,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Toast notification */}
+      {/* Toast notification (optional) */}
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-sm font-medium px-5 py-2.5 rounded-lg shadow-lg z-50">
           {toast}
